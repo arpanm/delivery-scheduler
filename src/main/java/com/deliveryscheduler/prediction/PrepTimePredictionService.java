@@ -75,4 +75,20 @@ public class PrepTimePredictionService {
                 .map(r -> r.getAvgPrepTimeSeconds())
                 .orElse(defaultPrepTimeSeconds);
     }
+
+    /**
+     * Predict prep time with variance estimation for an order.
+     */
+    public PredictionResult predictWithVariance(Long restaurantId, int itemCount, Instant orderTime) {
+        PrepTimeModel model = models.get(restaurantId);
+        if (model != null) {
+            return model.predictWithVariance(itemCount, orderTime);
+        }
+
+        // Fallback: use restaurant's configured average with default variance
+        int fallbackTime = restaurantRepository.findById(restaurantId)
+                .map(r -> r.getAvgPrepTimeSeconds())
+                .orElse(defaultPrepTimeSeconds);
+        return PredictionResult.defaultPrediction(fallbackTime);
+    }
 }

@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
  * or Google Directions API behind a cache.
  */
 @Component
-public class TravelTimeEstimator {
+public class TravelTimeEstimator implements TravelTimeProvider {
 
     private final double citySpeedMps;
     private final double detourFactor;

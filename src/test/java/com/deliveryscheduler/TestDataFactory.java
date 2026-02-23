@@ -1,6 +1,8 @@
 package com.deliveryscheduler;
 
 import com.deliveryscheduler.domain.model.*;
+import com.deliveryscheduler.scheduler.model.RiderSchedule;
+import com.deliveryscheduler.scheduler.model.ScheduledStop;
 
 import java.lang.reflect.Field;
 import java.time.Instant;
@@ -41,6 +43,45 @@ public class TestDataFactory {
         rider.setLastKnownLocation(location);
         setId(rider, id);
         return rider;
+    }
+
+    // --- Schedule & Stop helpers for unit tests ---
+
+    public static RiderSchedule createRiderSchedule(Long riderId, double lat, double lon) {
+        return new RiderSchedule(riderId, new GeoLocation(lat, lon));
+    }
+
+    public static ScheduledStop createPickupStop(Long orderId, double lat, double lon,
+                                                   Instant earliest, Instant latest,
+                                                   int serviceTimeSeconds) {
+        return new ScheduledStop(orderId, StopType.PICKUP, new GeoLocation(lat, lon),
+                new TimeWindow(earliest, latest), serviceTimeSeconds);
+    }
+
+    public static ScheduledStop createDeliveryStop(Long orderId, double lat, double lon,
+                                                     Instant earliest, Instant latest,
+                                                     int serviceTimeSeconds) {
+        return new ScheduledStop(orderId, StopType.DELIVERY, new GeoLocation(lat, lon),
+                new TimeWindow(earliest, latest), serviceTimeSeconds);
+    }
+
+    /**
+     * Build a schedule with one order (pickup + delivery) already inserted.
+     */
+    public static RiderSchedule createScheduleWithOneOrder(Long riderId, Long orderId,
+                                                             GeoLocation riderLoc,
+                                                             GeoLocation pickupLoc,
+                                                             GeoLocation deliveryLoc,
+                                                             int windowSeconds) {
+        Instant now = Instant.now();
+        RiderSchedule schedule = new RiderSchedule(riderId, riderLoc);
+        schedule.getStops().add(new ScheduledStop(
+                orderId, StopType.PICKUP, pickupLoc,
+                new TimeWindow(now, now.plusSeconds(windowSeconds)), 120));
+        schedule.getStops().add(new ScheduledStop(
+                orderId, StopType.DELIVERY, deliveryLoc,
+                new TimeWindow(now, now.plusSeconds(windowSeconds)), 90));
+        return schedule;
     }
 
     private static void setId(Object entity, Long id) {

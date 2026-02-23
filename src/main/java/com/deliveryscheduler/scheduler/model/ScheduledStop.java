@@ -45,6 +45,16 @@ public class ScheduledStop {
         return effectiveStart.plusSeconds(serviceTimeSeconds);
     }
 
+    /**
+     * A stop is frozen if it is uncompleted and its estimated arrival falls
+     * within the freeze window from now. Frozen stops must not be moved by
+     * the optimizer — the rider is already committed to reaching them.
+     */
+    public boolean isFrozen(Instant now, int freezeWindowSeconds) {
+        return !completed && estimatedArrival != null
+                && estimatedArrival.isBefore(now.plusSeconds(freezeWindowSeconds));
+    }
+
     public Long getOrderId() { return orderId; }
     public StopType getType() { return type; }
     public GeoLocation getLocation() { return location; }

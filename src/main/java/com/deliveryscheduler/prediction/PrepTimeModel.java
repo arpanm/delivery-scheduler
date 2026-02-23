@@ -20,6 +20,7 @@ public class PrepTimeModel {
     private double perItemTime;
     private double peakHourMultiplier;
     private double p90PrepTime;
+    private double residualStdError = 0;
 
     private PrepTimeModel() {}
 
@@ -41,6 +42,11 @@ public class PrepTimeModel {
         // Handle NaN from regression (e.g., zero variance in x)
         model.baseTime = Double.isNaN(intercept) ? stats.getMean() : Math.max(60, intercept);
         model.perItemTime = Double.isNaN(slope) ? 0 : Math.max(0, slope);
+
+        // Residual standard error for variance tracking
+        model.residualStdError = Double.isNaN(regression.getMeanSquareError())
+                ? model.baseTime * 0.15
+                : Math.sqrt(regression.getMeanSquareError());
 
         // Peak hour adjustment: compare peak vs off-peak averages
         double peakSum = 0, peakCount = 0;
@@ -81,6 +87,14 @@ public class PrepTimeModel {
 
         double blended = 0.7 * predicted + 0.3 * p90PrepTime;
         return (int) Math.ceil(Math.max(blended, 120)); // minimum 2 minutes
+    }
+
+    /**
+     * Predict prep time with variance estimation.
+     */
+    public PredictionResult predictWithVariance(int itemCount, Instant orderTime) {
+        int mean = predict(itemCount, orderTime);
+        return PredictionResult.statistical(mean, residualStdError);
     }
 
     static boolean isPeakHour(Instant time) {

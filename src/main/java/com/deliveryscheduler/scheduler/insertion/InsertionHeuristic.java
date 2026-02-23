@@ -4,7 +4,7 @@ import com.deliveryscheduler.domain.model.GeoLocation;
 import com.deliveryscheduler.domain.model.Order;
 import com.deliveryscheduler.domain.model.StopType;
 import com.deliveryscheduler.domain.model.TimeWindow;
-import com.deliveryscheduler.routing.TravelTimeEstimator;
+import com.deliveryscheduler.routing.TravelTimeProvider;
 import com.deliveryscheduler.scheduler.constraint.ConstraintEngine;
 import com.deliveryscheduler.scheduler.cost.CostFunction;
 import com.deliveryscheduler.scheduler.model.InsertionCandidate;
@@ -29,11 +29,11 @@ public class InsertionHeuristic {
 
     private final ConstraintEngine constraintEngine;
     private final CostFunction costFunction;
-    private final TravelTimeEstimator travelTimeEstimator;
+    private final TravelTimeProvider travelTimeEstimator;
 
     public InsertionHeuristic(ConstraintEngine constraintEngine,
                               CostFunction costFunction,
-                              TravelTimeEstimator travelTimeEstimator) {
+                              TravelTimeProvider travelTimeEstimator) {
         this.constraintEngine = constraintEngine;
         this.costFunction = costFunction;
         this.travelTimeEstimator = travelTimeEstimator;

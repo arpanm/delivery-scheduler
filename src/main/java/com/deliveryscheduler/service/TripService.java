@@ -5,25 +5,34 @@ import com.deliveryscheduler.domain.model.*;
 import com.deliveryscheduler.domain.repository.OrderRepository;
 import com.deliveryscheduler.domain.repository.TripRepository;
 import com.deliveryscheduler.infrastructure.messaging.EventPublisher;
+import com.deliveryscheduler.infrastructure.metrics.SchedulerMetrics;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
 @Service
 public class TripService {
 
+    private static final Logger log = LoggerFactory.getLogger(TripService.class);
+
     private final TripRepository tripRepository;
     private final OrderRepository orderRepository;
     private final EventPublisher eventPublisher;
+    private final SchedulerMetrics metrics;
 
     public TripService(TripRepository tripRepository,
                        OrderRepository orderRepository,
-                       EventPublisher eventPublisher) {
+                       EventPublisher eventPublisher,
+                       SchedulerMetrics metrics) {
         this.tripRepository = tripRepository;
         this.orderRepository = orderRepository;
         this.eventPublisher = eventPublisher;
+        this.metrics = metrics;
     }
 
     public Optional<Trip> findById(Long id) {
@@ -62,7 +71,7 @@ public class TripService {
         if (stop.getStopType() == StopType.PICKUP) {
             updateOrdersForPickup(stop.getReferenceId(), trip);
         } else {
-            updateOrderForDelivery(stop.getReferenceId());
+            updateOrderForDelivery(stop);
         }
 
         // Check if all stops are completed
@@ -88,11 +97,27 @@ public class TripService {
         }
     }
 
-    private void updateOrderForDelivery(Long orderId) {
-        Order order = orderRepository.findById(orderId).orElse(null);
-        if (order != null) {
+    /**
+     * Update order status on delivery completion (GAP 9: SLA tracking).
+     * Compares actual arrival time against promised delivery time to detect
+     * late deliveries. Late deliveries are marked DELIVERED_LATE and tracked
+     * via metrics for operational visibility.
+     */
+    private void updateOrderForDelivery(TripStop stop) {
+        Order order = orderRepository.findById(stop.getReferenceId()).orElse(null);
+        if (order == null) return;
+
+        Instant actualArrival = stop.getActualArrival();
+        Instant promisedBy = order.getPromisedDeliveryBy();
+
+        if (actualArrival != null && promisedBy != null && actualArrival.isAfter(promisedBy)) {
+            order.setStatus(OrderStatus.DELIVERED_LATE);
+            metrics.recordLateDelivery();
+            log.warn("Order {} delivered late: actual={}, promised={}",
+                    order.getId(), actualArrival, promisedBy);
+        } else {
             order.setStatus(OrderStatus.DELIVERED);
-            orderRepository.save(order);
         }
+        orderRepository.save(order);
     }
 }
