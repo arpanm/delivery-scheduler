@@ -33,14 +33,22 @@ scheduler:
     max-candidate-riders: 20
     max-radius-meters: 5000
   optimization:
-    interval-ms: 30000
+    interval-ms: 10000
     max-iterations: 500
-    max-time-ms: 5000
+    max-time-ms: 2000
+    freeze-window-seconds: 300
   cost:
     weight-distance: 1.0
     weight-time: 0.5
     weight-detour: 2.0
     weight-idle: 0.3
+    weight-sla-risk: 3.0
+    weight-batching-bonus: 1.5
+    weight-reassignment-penalty: 0.8
+    sla-risk-threshold-seconds: 300
+  retry:
+    max-attempts: 3
+    delay-ms: 30000
 
 prediction:
   min-samples-for-model: 20
@@ -52,3 +60,12 @@ routing:
   detour-factor: 1.4
   pickup-service-time-seconds: 120
   delivery-service-time-seconds: 90
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,info
+  metrics:
+    tags:
+      application: delivery-scheduler

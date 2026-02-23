@@ -7,7 +7,7 @@ import com.deliveryscheduler.domain.model.GeoLocation;
 import com.deliveryscheduler.domain.model.Order;
 import com.deliveryscheduler.domain.model.OrderStatus;
 import com.deliveryscheduler.domain.repository.OrderRepository;
-import com.deliveryscheduler.routing.TravelTimeEstimator;
+import com.deliveryscheduler.routing.TravelTimeProvider;
 import org.springframework.context.event.EventListener;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Async;
@@ -21,11 +21,11 @@ public class TrackingService {
 
     private final SimpMessagingTemplate messagingTemplate;
     private final OrderRepository orderRepository;
-    private final TravelTimeEstimator travelTimeEstimator;
+    private final TravelTimeProvider travelTimeEstimator;
 
     public TrackingService(SimpMessagingTemplate messagingTemplate,
                            OrderRepository orderRepository,
-                           TravelTimeEstimator travelTimeEstimator) {
+                           TravelTimeProvider travelTimeEstimator) {
         this.messagingTemplate = messagingTemplate;
         this.orderRepository = orderRepository;
         this.travelTimeEstimator = travelTimeEstimator;

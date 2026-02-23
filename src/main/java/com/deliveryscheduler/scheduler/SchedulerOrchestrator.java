@@ -2,6 +2,7 @@ package com.deliveryscheduler.scheduler;
 
 import com.deliveryscheduler.config.SchedulerProperties;
 import com.deliveryscheduler.domain.event.OrderAssignedEvent;
+import com.deliveryscheduler.domain.event.OrderCancelledEvent;
 import com.deliveryscheduler.domain.event.OrderPlacedEvent;
 import com.deliveryscheduler.domain.event.TripUpdatedEvent;
 import com.deliveryscheduler.domain.model.*;
@@ -12,12 +13,14 @@ import com.deliveryscheduler.geofencing.GeofencingService;
 import com.deliveryscheduler.infrastructure.cache.RiderLocationCache;
 import com.deliveryscheduler.infrastructure.cache.RiderLocationCache.RiderWithDistance;
 import com.deliveryscheduler.infrastructure.messaging.EventPublisher;
+import com.deliveryscheduler.infrastructure.metrics.SchedulerMetrics;
 import com.deliveryscheduler.scheduler.constraint.ConstraintEngine;
 import com.deliveryscheduler.scheduler.insertion.InsertionHeuristic;
 import com.deliveryscheduler.scheduler.model.InsertionCandidate;
 import com.deliveryscheduler.scheduler.model.RiderSchedule;
 import com.deliveryscheduler.scheduler.model.ScheduledStop;
 import com.deliveryscheduler.scheduler.optimization.LocalSearchOptimizer;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
@@ -28,8 +31,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.stream.Collectors;
 
 @Service
 public class SchedulerOrchestrator {
@@ -46,10 +51,19 @@ public class SchedulerOrchestrator {
     private final OrderRepository orderRepository;
     private final EventPublisher eventPublisher;
     private final SchedulerProperties properties;
+    private final SchedulerMetrics metrics;
 
     // In-memory state: current working schedules per zone
     private final ConcurrentHashMap<Long, ConcurrentHashMap<Long, RiderSchedule>> zoneSchedules = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, ReentrantReadWriteLock> zoneLocks = new ConcurrentHashMap<>();
+
+    // Retry state for failed assignments (GAP 7)
+    private final ConcurrentHashMap<Long, Integer> retryCount = new ConcurrentHashMap<>();
+    private final ScheduledExecutorService retryExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "scheduler-retry");
+        t.setDaemon(true);
+        return t;
+    });
 
     public SchedulerOrchestrator(InsertionHeuristic insertionHeuristic,
                                   LocalSearchOptimizer localSearchOptimizer,
@@ -60,7 +74,8 @@ public class SchedulerOrchestrator {
                                   TripRepository tripRepository,
                                   OrderRepository orderRepository,
                                   EventPublisher eventPublisher,
-                                  SchedulerProperties properties) {
+                                  SchedulerProperties properties,
+                                  SchedulerMetrics metrics) {
         this.insertionHeuristic = insertionHeuristic;
         this.localSearchOptimizer = localSearchOptimizer;
         this.constraintEngine = constraintEngine;
@@ -71,6 +86,44 @@ public class SchedulerOrchestrator {
         this.orderRepository = orderRepository;
         this.eventPublisher = eventPublisher;
         this.properties = properties;
+        this.metrics = metrics;
+    }
+
+    /**
+     * Recover in-memory state from database on startup (GAP 8).
+     * Rebuilds zoneSchedules from active/planned trips so that
+     * restarting the process doesn't orphan in-flight deliveries.
+     */
+    @PostConstruct
+    public void recoverState() {
+        try {
+            List<Trip> activeTrips = tripRepository.findByStatusIn(
+                    List.of(TripStatus.PLANNED, TripStatus.ACTIVE));
+
+            int recovered = 0;
+            for (Trip trip : activeTrips) {
+                try {
+                    if (trip.getOrders().isEmpty() || trip.getStops().isEmpty()) continue;
+
+                    Order firstOrder = trip.getOrders().get(0);
+                    Long zoneId = resolveZoneId(firstOrder);
+                    RiderSchedule schedule = rebuildScheduleFromTrip(trip);
+
+                    zoneSchedules.computeIfAbsent(zoneId, k -> new ConcurrentHashMap<>())
+                            .put(trip.getRider().getId(), schedule);
+                    zoneLocks.computeIfAbsent(zoneId, k -> new ReentrantReadWriteLock());
+                    recovered++;
+                } catch (Exception e) {
+                    log.warn("Failed to recover trip {}: {}", trip.getId(), e.getMessage());
+                }
+            }
+
+            if (recovered > 0) {
+                log.info("Recovered {} active schedules from DB on startup", recovered);
+            }
+        } catch (Exception e) {
+            log.warn("State recovery failed (may be expected on first run): {}", e.getMessage());
+        }
     }
 
     /**
@@ -101,16 +154,102 @@ public class SchedulerOrchestrator {
                 if (best != null && best.isFeasible()) {
                     applyInsertion(best, schedules, order);
                     long elapsed = System.currentTimeMillis() - startTime;
+                    metrics.recordAssignment(elapsed);
+                    metrics.recordBatchSize(best.getResultingSchedule().uncompletedStopCount() / 2);
+                    retryCount.remove(order.getId());
                     log.info("Order {} assigned to rider {} in {}ms (cost: {:.2f})",
                             order.getId(), best.getRiderId(), elapsed, best.getInsertionCost());
                 } else {
-                    log.warn("No feasible insertion found for order {}", order.getId());
+                    handleUnassignable(order);
                 }
             } finally {
                 lock.writeLock().unlock();
             }
         } catch (Exception e) {
             log.error("Failed to schedule order {}", order.getId(), e);
+        }
+    }
+
+    /**
+     * Handle orders that cannot be assigned: mark as UNASSIGNABLE and schedule retry (GAP 7).
+     */
+    private void handleUnassignable(Order order) {
+        int attempts = retryCount.merge(order.getId(), 1, Integer::sum);
+        int maxAttempts = properties.getRetry().getMaxAttempts();
+        long retryDelayMs = properties.getRetry().getDelayMs();
+
+        if (attempts <= maxAttempts) {
+            order.setStatus(OrderStatus.UNASSIGNABLE);
+            orderRepository.save(order);
+            log.warn("No feasible insertion for order {} (attempt {}/{}). Retrying in {}ms",
+                    order.getId(), attempts, maxAttempts, retryDelayMs);
+
+            retryExecutor.schedule(() -> retryOrder(order.getId()),
+                    retryDelayMs, TimeUnit.MILLISECONDS);
+        } else {
+            order.setStatus(OrderStatus.UNASSIGNABLE);
+            orderRepository.save(order);
+            metrics.recordUnassignable();
+            retryCount.remove(order.getId());
+            log.error("Order {} unassignable after {} attempts — requires manual intervention",
+                    order.getId(), maxAttempts);
+        }
+    }
+
+    /**
+     * Retry assignment for a previously unassignable order (GAP 7).
+     */
+    private void retryOrder(Long orderId) {
+        try {
+            Order order = orderRepository.findById(orderId).orElse(null);
+            if (order == null || order.getStatus() == OrderStatus.CANCELLED) {
+                retryCount.remove(orderId);
+                return;
+            }
+
+            log.info("Retrying assignment for order {}", orderId);
+            eventPublisher.publish(new OrderPlacedEvent(order));
+        } catch (Exception e) {
+            log.error("Retry failed for order {}", orderId, e);
+        }
+    }
+
+    /**
+     * Called when an order is cancelled. Removes the order from the rider's schedule.
+     */
+    @Async("schedulerExecutor")
+    @EventListener
+    public void onOrderCancelled(OrderCancelledEvent event) {
+        Order order = event.order();
+        try {
+            Long zoneId = resolveZoneId(order);
+            ReentrantReadWriteLock lock = zoneLocks.get(zoneId);
+            if (lock == null) return;
+
+            lock.writeLock().lock();
+            try {
+                ConcurrentHashMap<Long, RiderSchedule> schedules = zoneSchedules.get(zoneId);
+                if (schedules == null) return;
+
+                for (Map.Entry<Long, RiderSchedule> entry : schedules.entrySet()) {
+                    RiderSchedule schedule = entry.getValue();
+                    Set<Long> orderIds = schedule.getUncompletedOrderIds();
+                    if (orderIds.contains(order.getId())) {
+                        schedule.removeOrderStops(order.getId());
+                        constraintEngine.propagateArrivalTimes(schedule);
+                        persistAllSchedules(Map.of(entry.getKey(), schedule));
+                        eventPublisher.publish(new TripUpdatedEvent(zoneId));
+                        metrics.recordCancellation();
+                        log.info("Order {} cancelled and removed from rider {}'s schedule",
+                                order.getId(), entry.getKey());
+                        break;
+                    }
+                }
+            } finally {
+                lock.writeLock().unlock();
+            }
+        } catch (Exception e) {
+            log.error("Failed to process cancellation for order {}", order.getId(), e);
         }
     }
 
@@ -129,11 +268,16 @@ public class SchedulerOrchestrator {
                 Map<Long, RiderSchedule> schedules = entry.getValue();
                 if (schedules.isEmpty()) continue;
 
+                long startTime = System.currentTimeMillis();
                 boolean improved = localSearchOptimizer.optimize(schedules);
+                long elapsed = System.currentTimeMillis() - startTime;
+
+                metrics.recordOptimization(elapsed);
+
                 if (improved) {
                     persistAllSchedules(schedules);
                     eventPublisher.publish(new TripUpdatedEvent(zoneId));
-                    log.debug("Zone {} re-optimized", zoneId);
+                    log.debug("Zone {} re-optimized in {}ms", zoneId, elapsed);
                 }
             } finally {
                 lock.writeLock().unlock();
@@ -237,6 +381,42 @@ public class SchedulerOrchestrator {
                         tripRepository.save(trip);
                     });
         }
+    }
+
+    /**
+     * Rebuild a RiderSchedule from a persisted Trip entity (GAP 8).
+     * Used during startup recovery to restore in-memory state.
+     */
+    private RiderSchedule rebuildScheduleFromTrip(Trip trip) {
+        GeoLocation riderLocation = riderLocationCache.getRiderLocation(trip.getRider().getId());
+        if (riderLocation == null) {
+            // Fallback: use location of first uncompleted stop, or first stop
+            riderLocation = trip.getStops().stream()
+                    .filter(s -> !s.isCompleted())
+                    .findFirst()
+                    .map(TripStop::getLocation)
+                    .orElse(trip.getStops().get(0).getLocation());
+        }
+
+        RiderSchedule schedule = new RiderSchedule(trip.getRider().getId(), riderLocation);
+        for (TripStop ts : trip.getStops()) {
+            ScheduledStop ss = new ScheduledStop(
+                    ts.getReferenceId(), ts.getStopType(), ts.getLocation(),
+                    ts.getTimeWindow(), ts.getServiceTimeSeconds());
+            ss.setEstimatedArrival(ts.getEstimatedArrival());
+            if (ts.isCompleted()) ss.setCompleted(true);
+            schedule.getStops().add(ss);
+        }
+
+        // Recalculate current stop index
+        for (int i = 0; i < schedule.getStops().size(); i++) {
+            if (!schedule.getStops().get(i).isCompleted()) {
+                schedule.setCurrentStopIndex(i);
+                break;
+            }
+        }
+
+        return schedule;
     }
 
     private Long resolveZoneId(Order order) {

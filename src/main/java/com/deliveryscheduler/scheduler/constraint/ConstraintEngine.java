@@ -1,7 +1,7 @@
 package com.deliveryscheduler.scheduler.constraint;
 
 import com.deliveryscheduler.domain.model.GeoLocation;
-import com.deliveryscheduler.routing.TravelTimeEstimator;
+import com.deliveryscheduler.routing.TravelTimeProvider;
 import com.deliveryscheduler.scheduler.model.RiderSchedule;
 import com.deliveryscheduler.scheduler.model.ScheduledStop;
 import org.springframework.stereotype.Component;
@@ -15,10 +15,10 @@ import java.util.List;
 @Component
 public class ConstraintEngine {
 
-    private final TravelTimeEstimator travelTimeEstimator;
+    private final TravelTimeProvider travelTimeEstimator;
     private final List<ScheduleConstraint> constraints;
 
-    public ConstraintEngine(TravelTimeEstimator travelTimeEstimator) {
+    public ConstraintEngine(TravelTimeProvider travelTimeEstimator) {
         this.travelTimeEstimator = travelTimeEstimator;
         this.constraints = List.of(
                 new TimeWindowConstraint(),

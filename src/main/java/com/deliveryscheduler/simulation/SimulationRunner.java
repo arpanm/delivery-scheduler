@@ -8,7 +8,7 @@ import com.deliveryscheduler.domain.repository.RiderRepository;
 import com.deliveryscheduler.domain.repository.TripRepository;
 import com.deliveryscheduler.domain.repository.ZoneRepository;
 import com.deliveryscheduler.infrastructure.cache.RiderLocationCache;
-import com.deliveryscheduler.routing.TravelTimeEstimator;
+import com.deliveryscheduler.routing.TravelTimeProvider;
 import com.deliveryscheduler.service.OrderService;
 import com.deliveryscheduler.service.RiderService;
 import com.deliveryscheduler.service.TripService;
@@ -36,7 +36,7 @@ public class SimulationRunner {
     private final RestaurantRepository restaurantRepository;
     private final RiderRepository riderRepository;
     private final RiderLocationCache riderLocationCache;
-    private final TravelTimeEstimator travelTimeEstimator;
+    private final TravelTimeProvider travelTimeEstimator;
 
     public SimulationRunner(OrderService orderService,
                              RiderService riderService,
@@ -46,7 +46,7 @@ public class SimulationRunner {
                              RestaurantRepository restaurantRepository,
                              RiderRepository riderRepository,
                              RiderLocationCache riderLocationCache,
-                             TravelTimeEstimator travelTimeEstimator) {
+                             TravelTimeProvider travelTimeEstimator) {
         this.orderService = orderService;
         this.riderService = riderService;
         this.tripService = tripService;

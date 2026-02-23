@@ -11,12 +11,13 @@ import java.util.*;
  * Classic TSP improvement heuristic adapted for VRPTW.
  *
  * Only generates moves where the reversed segment doesn't violate
- * precedence constraints (pickup before delivery for same order).
+ * precedence constraints (pickup before delivery for same order)
+ * and doesn't contain any frozen stops.
  */
 public class TwoOptMove implements NeighborhoodOperator {
 
     @Override
-    public List<Move> generateMoves(Map<Long, RiderSchedule> schedules) {
+    public List<Move> generateMoves(Map<Long, RiderSchedule> schedules, Set<Long> frozenOrderIds) {
         List<Move> moves = new ArrayList<>();
 
         for (Map.Entry<Long, RiderSchedule> entry : schedules.entrySet()) {
@@ -27,6 +28,9 @@ public class TwoOptMove implements NeighborhoodOperator {
 
             for (int i = start; i < n - 1; i++) {
                 for (int j = i + 1; j < n; j++) {
+                    // Skip if any stop in the segment [i..j] belongs to a frozen order
+                    if (segmentContainsFrozen(schedule, i, j, frozenOrderIds)) continue;
+
                     if (precedenceSafeToReverse(schedule, i, j)) {
                         moves.add(new Move(Move.MoveType.TWO_OPT, riderId, i, j));
                     }
@@ -35,6 +39,20 @@ public class TwoOptMove implements NeighborhoodOperator {
         }
 
         return moves;
+    }
+
+    /**
+     * Check if any stop in the segment [i..j] belongs to a frozen order.
+     */
+    private boolean segmentContainsFrozen(RiderSchedule schedule, int i, int j,
+                                           Set<Long> frozenOrderIds) {
+        List<ScheduledStop> stops = schedule.getStops();
+        for (int k = i; k <= j; k++) {
+            if (frozenOrderIds.contains(stops.get(k).getOrderId())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

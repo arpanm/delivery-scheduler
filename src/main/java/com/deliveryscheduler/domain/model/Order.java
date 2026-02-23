@@ -41,6 +41,9 @@ public class Order {
     @Column(nullable = false)
     private int estimatedPrepTimeSeconds;
 
+    @Column
+    private Double prepTimeVarianceSeconds;
+
     @Column(nullable = false)
     private Instant estimatedReadyAt;
 
@@ -92,6 +95,8 @@ public class Order {
     public Instant getPlacedAt() { return placedAt; }
     public Instant getPromisedDeliveryBy() { return promisedDeliveryBy; }
     public int getEstimatedPrepTimeSeconds() { return estimatedPrepTimeSeconds; }
+    public Double getPrepTimeVarianceSeconds() { return prepTimeVarianceSeconds; }
+    public void setPrepTimeVarianceSeconds(Double prepTimeVarianceSeconds) { this.prepTimeVarianceSeconds = prepTimeVarianceSeconds; }
     public Instant getEstimatedReadyAt() { return estimatedReadyAt; }
     public Trip getTrip() { return trip; }
     public void setTrip(Trip trip) { this.trip = trip; }

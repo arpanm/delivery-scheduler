@@ -1,5 +1,6 @@
 package com.deliveryscheduler.service;
 
+import com.deliveryscheduler.domain.event.OrderCancelledEvent;
 import com.deliveryscheduler.domain.event.OrderPlacedEvent;
 import com.deliveryscheduler.domain.model.*;
 import com.deliveryscheduler.domain.repository.OrderRepository;
@@ -61,10 +62,12 @@ public class OrderService {
     }
 
     @Transactional
-    public void cancelOrder(Long orderId) {
+    public Order cancelOrder(Long orderId) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new IllegalArgumentException("Order not found: " + orderId));
         order.setStatus(OrderStatus.CANCELLED);
         orderRepository.save(order);
+        eventPublisher.publish(new OrderCancelledEvent(order));
+        return order;
     }
 }

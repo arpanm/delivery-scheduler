@@ -3,7 +3,7 @@ package com.deliveryscheduler.simulation;
 import com.deliveryscheduler.domain.model.*;
 import com.deliveryscheduler.domain.repository.TripRepository;
 import com.deliveryscheduler.infrastructure.cache.RiderLocationCache;
-import com.deliveryscheduler.routing.TravelTimeEstimator;
+import com.deliveryscheduler.routing.TravelTimeProvider;
 import com.deliveryscheduler.service.RiderService;
 import com.deliveryscheduler.service.TripService;
 import org.slf4j.Logger;
@@ -24,14 +24,14 @@ public class RiderSimulator {
     private final TripService tripService;
     private final TripRepository tripRepository;
     private final RiderLocationCache riderLocationCache;
-    private final TravelTimeEstimator travelTimeEstimator;
+    private final TravelTimeProvider travelTimeEstimator;
     private final List<Rider> riders;
     private final MetricsCollector metrics;
 
     public RiderSimulator(RiderService riderService, TripService tripService,
                           TripRepository tripRepository,
                           RiderLocationCache riderLocationCache,
-                          TravelTimeEstimator travelTimeEstimator,
+                          TravelTimeProvider travelTimeEstimator,
                           List<Rider> riders, MetricsCollector metrics) {
         this.riderService = riderService;
         this.tripService = tripService;

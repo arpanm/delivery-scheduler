@@ -10,12 +10,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
 
 /**
  * Periodic re-optimization using steepest descent local search.
  * Bounded by iteration count and wall-clock time per zone.
+ *
+ * Respects freeze windows: stops whose estimated arrival falls within
+ * the freeze window (default 5 min) are never moved, since the rider
+ * is already committed to reaching them.
  */
 @Component
 public class LocalSearchOptimizer {
@@ -28,6 +33,7 @@ public class LocalSearchOptimizer {
     private final List<NeighborhoodOperator> operators;
     private final int maxIterations;
     private final long maxTimeMs;
+    private final int freezeWindowSeconds;
 
     public LocalSearchOptimizer(ConstraintEngine constraintEngine,
                                  CostFunction costFunction,
@@ -43,13 +49,20 @@ public class LocalSearchOptimizer {
         );
         this.maxIterations = properties.getOptimization().getMaxIterations();
         this.maxTimeMs = properties.getOptimization().getMaxTimeMs();
+        this.freezeWindowSeconds = properties.getOptimization().getFreezeWindowSeconds();
     }
 
     /**
      * Improve the current solution using local search.
      * Returns true if any improvement was found.
+     *
+     * Computes frozen order IDs upfront: any order with a stop arriving
+     * within freezeWindowSeconds is protected from all moves.
      */
     public boolean optimize(Map<Long, RiderSchedule> schedules) {
+        Instant now = Instant.now();
+        Set<Long> frozenOrderIds = computeFrozenOrderIds(schedules, now);
+
         double currentCost = costFunction.absoluteCost(schedules);
         boolean improved = false;
         long startTime = System.currentTimeMillis();
@@ -61,7 +74,7 @@ public class LocalSearchOptimizer {
             double bestDelta = 0;
 
             for (NeighborhoodOperator operator : operators) {
-                List<Move> moves = operator.generateMoves(schedules);
+                List<Move> moves = operator.generateMoves(schedules, frozenOrderIds);
 
                 for (Move move : moves) {
                     Map<Long, RiderSchedule> candidate = applyMoveSpeculatively(schedules, move);
@@ -78,6 +91,13 @@ public class LocalSearchOptimizer {
 
                     double newCost = costFunction.absoluteCost(candidate);
                     double delta = newCost - currentCost;
+
+                    // For cross-rider relocations, add reassignment penalty
+                    if (move.getType() == Move.MoveType.RELOCATE
+                            && move.getTargetRiderId() != null
+                            && !move.getTargetRiderId().equals(move.getSourceRiderId())) {
+                        delta += costFunction.reassignmentCost();
+                    }
 
                     if (delta < bestDelta) {
                         bestDelta = delta;
@@ -96,6 +116,25 @@ public class LocalSearchOptimizer {
         }
 
         return improved;
+    }
+
+    /**
+     * Identify all order IDs that have at least one frozen stop
+     * (estimated arrival within freeze window from now).
+     */
+    private Set<Long> computeFrozenOrderIds(Map<Long, RiderSchedule> schedules, Instant now) {
+        Set<Long> frozenIds = new HashSet<>();
+        for (RiderSchedule schedule : schedules.values()) {
+            for (ScheduledStop stop : schedule.getStops()) {
+                if (stop.isFrozen(now, freezeWindowSeconds)) {
+                    frozenIds.add(stop.getOrderId());
+                }
+            }
+        }
+        if (!frozenIds.isEmpty()) {
+            log.debug("Frozen {} orders within {}s window", frozenIds.size(), freezeWindowSeconds);
+        }
+        return frozenIds;
     }
 
     /**
