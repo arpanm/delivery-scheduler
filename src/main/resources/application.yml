@@ -1,0 +1,54 @@
+spring:
+  application:
+    name: delivery-scheduler
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/delivery_scheduler
+    username: ${DB_USERNAME:delivery}
+    password: ${DB_PASSWORD:delivery}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.spatial.dialect.postgis.PostgisPG10Dialect
+    open-in-view: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+server:
+  port: 8080
+
+scheduler:
+  insertion:
+    max-candidate-riders: 20
+    max-radius-meters: 5000
+  optimization:
+    interval-ms: 30000
+    max-iterations: 500
+    max-time-ms: 5000
+  cost:
+    weight-distance: 1.0
+    weight-time: 0.5
+    weight-detour: 2.0
+    weight-idle: 0.3
+
+prediction:
+  min-samples-for-model: 20
+  model-refresh-interval-ms: 3600000
+  default-prep-time-seconds: 600
+
+routing:
+  city-speed-mps: 6.0
+  detour-factor: 1.4
+  pickup-service-time-seconds: 120
+  delivery-service-time-seconds: 90
